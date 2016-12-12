@@ -2218,7 +2218,7 @@ void SGD<ElemType>::UpdateWeights(Matrix<ElemType>& functionValues, Matrix<ElemT
         }
         else
         {
-            functionValues.NesterovAcceleratedMomentumSGDUpdate(gradients, learnRatePerSample);
+            functionValues.NesterovAcceleratedMomentumSGDUpdate(gradientValues, smoothedGradientValues, learnRatePerSample, momentum);
         }
     }
     else if (adpType == GradientsUpdateType::AdaGrad ||
