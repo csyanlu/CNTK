@@ -3539,6 +3539,7 @@ namespace CNTK
         Variable    m_testSampleCountVar;
         LearnersPtr m_parameterLearners;
         bool        m_distributed;
+        ValuePtr m_rootGradientValue;
 
         size_t m_prevMinibatchNumSamples;
         ValuePtr m_prevMinibatchAggregateTrainingLossValue;
