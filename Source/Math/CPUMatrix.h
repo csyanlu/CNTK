@@ -390,6 +390,8 @@ public:
 public:
     // This functions do not depend on <ElemType>, i.e. you can call them on any <ElemType>
     static int SetNumThreads(int numThreads);
+    static int GetNumThreads();
+
     static void SetCompatibleMode();
 
     // static BLAS functions

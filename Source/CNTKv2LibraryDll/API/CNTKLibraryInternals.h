@@ -243,6 +243,7 @@ namespace CNTK
         CNTK_API void ForceSynchronousCUDAKernelExecutions();
 
         CNTK_API void ForceDeterministicAlgorithms();
+        CNTK_API bool ShouldForceDeterministicAlgorithms();
 
         CNTK_API void SetFixedRandomSeed(unsigned long fixedRandomSeed);
 

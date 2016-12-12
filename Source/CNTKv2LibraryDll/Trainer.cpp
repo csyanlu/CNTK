@@ -7,7 +7,6 @@
 #include "CNTKLibrary.h"
 #include "Utils.h"
 #include "Learner.h"
-
 namespace
 {
     const std::wstring learnersPropertyName = L"Learners";
@@ -28,11 +27,9 @@ namespace CNTK
           m_prevMinibatchNumSamples(1),
           m_distributed(false)
     {
-        // Resetting number of threads.
-        // Default value is not really used, not yet clear why.
         size_t numCPUThreads = GetMaxNumCPUThreads();
-        if (numCPUThreads != 0)
-            SetMaxNumCPUThreads(numCPUThreads);
+        if (numCPUThreads == 1 && !Internal::ShouldForceDeterministicAlgorithms())
+            SetMaxNumCPUThreads(std::thread::hardware_concurrency());
 
         std::vector<Variable> combinedFunctionArgs = { m_model, m_lossFunction };
         if (!m_lossFunction->Output().DynamicAxes().empty())
