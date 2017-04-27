@@ -3,16 +3,11 @@
 # for full license information.
 # ==============================================================================
 
-import sys
 import numbers
 import collections
-import copy
 import numpy as np
-from numbers import Number
-from scipy import sparse
 
 from .. import cntk_py
-from ..device import use_default_device, cpu
 from ..axis import Axis
 from cntk.internal import typemap
 
@@ -69,7 +64,7 @@ def sanitize_shape(shape):
 
 def sanitize_input(arg, fallback_dtype=np.float32, reshape=None):
     """sanitize_input(arg, fallback_dtype=np.float32, reshape=None)
-    Convert to :class:`~cntk.ops.variables.Variable` so that it can be passed
+    Convert to :class:`~cntk.variables.Variable` so that it can be passed
     as Variable to the CNTK operators. 
 
       * If ``arg`` is a NumPy array and its type is neither `np.float32` nor
@@ -78,7 +73,7 @@ def sanitize_input(arg, fallback_dtype=np.float32, reshape=None):
         will be returned. 
 
     Args:
-        arg (number, NumPy array, :class:`~cntk.ops.variables.Variable`, or :class:`~cntk.ops.functions.Function`): input
+        arg (number, NumPy array, :class:`~cntk.variables.Variable`, or :class:`~cntk.ops.functions.Function`): input
         fallback_dtype (NumPy dtype): fallback dtype in case ``arg`` is a list
 
     Returns:
@@ -87,9 +82,10 @@ def sanitize_input(arg, fallback_dtype=np.float32, reshape=None):
     """
 
     from cntk.ops.functions import UserFunction
-    from cntk.ops.variables import Constant, Variable, Parameter
+    from cntk.variables import Constant, Variable, Parameter
     from cntk.ops.functions import Function
     from cntk.ops import constant
+    from ..core import asarray
 
     # is it a Variable or a Function?
     if isinstance(arg,
@@ -99,12 +95,17 @@ def sanitize_input(arg, fallback_dtype=np.float32, reshape=None):
                    Function, cntk_py.Function)):
         return arg
 
+    if isinstance(arg, Variable._Type):
+        raise ValueError("Input is a type object (" + str(arg) + "). Did you mean to pass 'input(" + str(arg) + ")'?")
+
     # maybe a Python list that we can interpret as a NumPy array?
     if isinstance(arg, list) and not arg:
         raise ValueError('input is empty')
 
     if not isinstance(arg, np.ndarray) or arg.dtype != fallback_dtype:
-        arg = np.asarray(arg, dtype=fallback_dtype)
+        # TODO: check whether Values can be ingested directly
+        arg = asarray(arg, fallback_dtype)
+
         if arg.shape == ():
             arg.shape = (1,)
 
@@ -119,13 +120,13 @@ def sanitize_batch(var, batch, seq_starts=None, device=None):
     Convert to :class:`~cntk.core.Value`.
 
     Args:
-        var (:class:`~cntk.ops.variables.Variable`): input variable into which
+        var (:class:`~cntk.variables.Variable`): input variable into which
          ``batch`` is passed
         batch: batch input for `var`. It can be
 
            * a single NumPy array denoting the full minibatch
            * a list of NumPy arrays or SciPy sparse CSR matrices each representing a sequence
-           * a :class:`~cntk.core.Value` object (e.g. returned by :func:`one_hot`)
+           * a :class:`~cntk.core.Value` object (e.g. returned by :func:`cntk.core.Value.one_hot`)
         seq_starts (list of bools or None): if None, every sequence is
          treated as a new sequence. Otherwise, it is interpreted as a list of
          Booleans one for each sequence in the batch that tell whether a
@@ -146,9 +147,10 @@ def sanitize_batch(var, batch, seq_starts=None, device=None):
 
     if seq_starts and len(var.dynamic_axes) <= 1:
         raise ValueError('you specified sequence begin markers, but your '
-                         'input_variable does not contain a sequence axis.')
+                         'input does not contain a sequence axis.')
 
     if device is None:
+        from ..device import use_default_device
         device = use_default_device()
 
     from .. import Value
@@ -157,8 +159,8 @@ def sanitize_batch(var, batch, seq_starts=None, device=None):
 
 def sanitize_value(shape, value, dtype, device):
     '''
-    Converts a given ``value`` to an :class:`~cntk.NDArrayView` object that can be passed to
-    the CNTK core.
+    Converts a given ``value`` to an :class:`~cntk.core.NDArrayView` object
+    that can be passed to the CNTK core.
 
     Args:
         shape (tuple): shape of the value
@@ -169,9 +171,10 @@ def sanitize_value(shape, value, dtype, device):
          on
 
     Returns:
-        :class:`~cntk.NDArrayView` object representing ``value``
+        :class:`~cntk.core.NDArrayView` object representing ``value``
     '''
     from .. import NDArrayView
+    from ..core import asarray
     if value is None:
         if shape is None:
             raise ValueError('you need to specify at least shape or value')
@@ -179,11 +182,14 @@ def sanitize_value(shape, value, dtype, device):
         ndav = NDArrayView(shape, cntk_dtype, device)
     else:
         np_dtype = sanitize_dtype_numpy(dtype)
-        if not isinstance(value, np.ndarray) or value.dtype != np_dtype:
+        is_numpy = isinstance(value, np.ndarray)
+        if is_numpy and value.dtype != np_dtype:
+            value = value.astype(np_dtype)
+        elif not is_numpy:
             if np.isscalar(value) and shape:
                 value = np.full(shape, value, dtype=np_dtype)
             else:
-                value = np.asarray(value, dtype=np_dtype)
+                value = asarray(value, np_dtype)
 
         ndav = NDArrayView.from_dense(value, device)
 
@@ -216,8 +222,8 @@ def sanitize_var_map(op_arguments, arguments, precision=None,
     handed off to the evaluation methods
     (:meth:`~cntk.ops.functions.Function.forward`,
     :meth:`~cntk.ops.functions.Function.backward`,
-    :meth:`~cntk.Trainer.train_minibatch` and
-    :meth:`~cntk.Trainer.test_minibatch`).
+    :meth:`~cntk.train.trainer.Trainer.train_minibatch` and
+    :meth:`~cntk.train.trainer.Trainer.test_minibatch`).
 
     Args:
         op_arguments (:class:`~cntk.ops.functions.Function`): arguments of the
@@ -231,6 +237,7 @@ def sanitize_var_map(op_arguments, arguments, precision=None,
             data.
           * any other type: if node has a unique input, arguments is
             mapped to this input.
+
          For nodes with more than one input, only dict is allowed.
 
          In both cases, every sample in the data will be interpreted
@@ -263,7 +270,7 @@ def sanitize_var_map(op_arguments, arguments, precision=None,
          map are converted to the underlying value (:class:`~cntk.core.Value`)
          instances (default), or if they should remain intact, as they contain
          additional meta information required by the Trainer (specifically, by
-         the :meth:`~cntk.Trainer.train_minibatch` method).
+         the :meth:`~cntk.train.trainer.Trainer.train_minibatch` method).
 
     Returns:
         `dict` that maps variables to sanitized batches
@@ -355,6 +362,17 @@ def sanitize_var_map(op_arguments, arguments, precision=None,
     return var_map
 
 
+def data_type_to_dtype(data_type):
+    if data_type == cntk_py.DataType_Float:
+        return np.float32
+    elif data_type == cntk_py.DataType_Double:
+        return np.float64
+    elif data_type == cntk_py.DataType_Unknown:
+        return object
+    else:
+        raise ValueError('data_type %s is not supported'%data_type)
+
+
 def sanitize_dtype_numpy(dtype):
     is_type = isinstance(dtype, type) or isinstance(dtype, np.dtype)
     is_str = is_string(dtype)
@@ -409,6 +427,25 @@ def sanitize_axis(axis):
     else:
         return axis
 
+def sanitize_axis_list(axes): 
+    '''
+    Sanitizes a list of axes.
+
+    Args:
+        axes (list of :class:`~cntk.axis.Axis` or int or None): the axes to be used.
+
+          * :class:`~cntk.axis.Axis`: use axis instance directly (will convert
+            row- to col-major in case of static axis).
+          * int: if positive, use it as static axis. If negative, count from
+            last to first axis
+          * None: denote all available axes
+    '''
+    if not type(axes) in (list, tuple):
+        axes = [axes]
+    retAxes = []
+    for ax in axes: 
+        retAxes.append(sanitize_axis(ax))
+    return retAxes
 
 def sanitize_dynamic_axes(axes):
     if not type(axes) in (list, tuple):
@@ -418,3 +455,67 @@ def sanitize_dynamic_axes(axes):
             raise TypeError('type Axis expected, got %s instead' % type(ax))
     axes = tuple(reversed(axes))
     return axes
+
+
+def sanitize_variable_value_dict(var_value_dict):
+    if len(var_value_dict) > 1:
+        return var_value_dict
+    else:
+        return list(var_value_dict.values())[0]
+
+def _sanitize_common_conv_args(strides, auto_padding):
+    strides = sanitize_shape(strides)
+
+    # Reverse the 'auto_padding' argument to account for the col-major tensor
+    # layout in core C++ implementation
+    auto_padding = list(reversed(auto_padding))
+
+    return strides, auto_padding
+    
+def sanitize_pooling_args(pooling_window_shape, strides, auto_padding):
+    pooling_window_shape = sanitize_shape(pooling_window_shape)
+    strides, auto_padding = _sanitize_common_conv_args(strides, auto_padding)
+    return pooling_window_shape, strides, auto_padding
+    
+def sanitize_convolution_args(strides, sharing, auto_padding):
+    strides, auto_padding = _sanitize_common_conv_args(strides, auto_padding)
+
+    # Reverse the 'sharing' argument to account for the col-major tensor layout
+    # in core C++ implementation
+    sharing = list(reversed(sharing))
+
+    return strides, sharing, auto_padding
+
+def sanitize_Function_attributes(attributes):
+    # Reverse the 'sharing' and 'auto_padding' attributes to account for the
+    # col-major tensor layout in core C++ implementation
+    if 'sharing' in attributes:
+        attributes['sharing'] = list(reversed(attributes['sharing']))
+
+    if 'autoPadding' in attributes:
+        attributes['autoPadding'] = list(reversed(attributes['autoPadding']))
+
+    return attributes
+
+def memoize(func):
+    class memodict(dict):
+        def __init__(self, f):
+            self.f = f
+        def __call__(self, *args):
+            return self[args]
+        def __missing__(self, key):
+            self[key] = ret = func(*key)
+            return ret
+    return memodict(func)
+
+@memoize
+def _sparse_to_dense_network_cache(input_shape, is_sequence, device):
+    from cntk.ops import times, input, sequence
+
+    if is_sequence:
+        temp_input = sequence.input(input_shape, is_sparse=True)
+    else:
+        temp_input = input(input_shape, is_sparse=True)
+
+    eye_shape = input_shape[-1]
+    return times(temp_input, np.eye(eye_shape))
